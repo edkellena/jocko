@@ -6,15 +6,22 @@ services:
       context: .
     image: travisjeffery:jocko
     command: jocko broker --id 0 --raft-addr=jocko_a:9093
+    ports:
+      - 9092:9092/tcp
 
   jocko_b:
     build:
       context: .
     image: travisjeffery:jocko
     command: jocko broker --serf-members=jocko_a:9094 --id 1 --raft-addr=jocko_b:9093
+    ports:
+      - 9192:9092/tcp
+
 
   jocko_c:
     build:
       context: .
     image: travisjeffery:jocko
     command: jocko broker --serf-members=jocko_a:9094 --id 2 --raft-addr=jocko_c:9093
+    ports:
+      - 9292:9092/tcp
