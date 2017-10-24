@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"io"
 	"reflect"
 	"testing"
 
@@ -19,49 +20,62 @@ func TestNew(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
+		fields  fields
 		want    *Broker
 		wantErr bool
 	}{
-	// TODO: Add test cases.
+		{
+			name:    "bootstrap raft and serf",
+			wantErr: false,
+			fields:  newFields(),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := New(tt.args.id, tt.args.opts...)
+			_, err := New(tt.fields.id, Addr(tt.fields.addr), Serf(tt.fields.serf), Raft(tt.fields.raft), LogDir(tt.fields.logDir))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("New() = %v, want %v", got, tt.want)
+			if !tt.fields.serf.BootstrapInvoked {
+				t.Error("expected serf bootstrap invoked; did not")
+			}
+			if !tt.fields.raft.BootstrapInvoked {
+				t.Error("expected raft bootstrap invoked; did not")
 			}
 		})
 	}
 }
 
 func TestBroker_Run(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
 	type args struct {
 		ctx       context.Context
-		requestc  <-chan jocko.Request
-		responsec chan<- jocko.Response
+		requestc  chan jocko.Request
+		responsec chan jocko.Response
+		request   jocko.Request
+		response  jocko.Response
 	}
 	tests := []struct {
 		name   string
 		fields fields
 		args   args
 	}{
-	// TODO: Add test cases.
+		{
+			name:   "api verions",
+			fields: newFields(),
+			args: args{
+				requestc:  make(chan jocko.Request, 2),
+				responsec: make(chan jocko.Response, 2),
+				request: jocko.Request{
+					Header:  &protocol.RequestHeader{CorrelationID: 1},
+					Request: &protocol.APIVersionsRequest{},
+				},
+				response: jocko.Response{
+					Header:   &protocol.RequestHeader{CorrelationID: 1},
+					Response: &protocol.Response{CorrelationID: 1, Body: (&Broker{}).handleAPIVersions(nil, nil)},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,24 +91,19 @@ func TestBroker_Run(t *testing.T) {
 				shutdownCh:  tt.fields.shutdownCh,
 				shutdown:    tt.fields.shutdown,
 			}
-			b.Run(tt.args.ctx, tt.args.requestc, tt.args.responsec)
+			ctx, cancel := context.WithCancel(context.Background())
+			go b.Run(ctx, tt.args.requestc, tt.args.responsec)
+			tt.args.requestc <- tt.args.request
+			response := <-tt.args.responsec
+			if !reflect.DeepEqual(response.Response, tt.args.response.Response) {
+				t.Errorf("got %v, want: %v", response.Response, tt.args.response.Response)
+			}
+			cancel()
 		})
 	}
 }
 
 func TestBroker_Join(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
 	type args struct {
 		addrs []string
 	}
@@ -104,7 +113,12 @@ func TestBroker_Join(t *testing.T) {
 		args   args
 		want   protocol.Error
 	}{
-	// TODO: Add test cases.
+		{
+			name:   "joins with serf",
+			fields: newFields(),
+			args:   args{addrs: []string{"localhost:9082"}},
+			want:   protocol.ErrNone,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,373 +137,8 @@ func TestBroker_Join(t *testing.T) {
 			if got := b.Join(tt.args.addrs...); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Broker.Join() = %v, want %v", got, tt.want)
 			}
-		})
-	}
-}
-
-func TestBroker_handleAPIVersions(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
-	type args struct {
-		header *protocol.RequestHeader
-		req    *protocol.APIVersionsRequest
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   *protocol.APIVersionsResponse
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Broker{
-				logger:      tt.fields.logger,
-				id:          tt.fields.id,
-				topicMap:    tt.fields.topicMap,
-				replicators: tt.fields.replicators,
-				brokerAddr:  tt.fields.brokerAddr,
-				logDir:      tt.fields.logDir,
-				raft:        tt.fields.raft,
-				serf:        tt.fields.serf,
-				shutdownCh:  tt.fields.shutdownCh,
-				shutdown:    tt.fields.shutdown,
-			}
-			if got := b.handleAPIVersions(tt.args.header, tt.args.req); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Broker.handleAPIVersions() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBroker_handleCreateTopic(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
-	type args struct {
-		header *protocol.RequestHeader
-		reqs   *protocol.CreateTopicRequests
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   *protocol.CreateTopicsResponse
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Broker{
-				logger:      tt.fields.logger,
-				id:          tt.fields.id,
-				topicMap:    tt.fields.topicMap,
-				replicators: tt.fields.replicators,
-				brokerAddr:  tt.fields.brokerAddr,
-				logDir:      tt.fields.logDir,
-				raft:        tt.fields.raft,
-				serf:        tt.fields.serf,
-				shutdownCh:  tt.fields.shutdownCh,
-				shutdown:    tt.fields.shutdown,
-			}
-			if got := b.handleCreateTopic(tt.args.header, tt.args.reqs); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Broker.handleCreateTopic() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBroker_handleDeleteTopics(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
-	type args struct {
-		header *protocol.RequestHeader
-		reqs   *protocol.DeleteTopicsRequest
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   *protocol.DeleteTopicsResponse
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Broker{
-				logger:      tt.fields.logger,
-				id:          tt.fields.id,
-				topicMap:    tt.fields.topicMap,
-				replicators: tt.fields.replicators,
-				brokerAddr:  tt.fields.brokerAddr,
-				logDir:      tt.fields.logDir,
-				raft:        tt.fields.raft,
-				serf:        tt.fields.serf,
-				shutdownCh:  tt.fields.shutdownCh,
-				shutdown:    tt.fields.shutdown,
-			}
-			if got := b.handleDeleteTopics(tt.args.header, tt.args.reqs); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Broker.handleDeleteTopics() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBroker_handleLeaderAndISR(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
-	type args struct {
-		header *protocol.RequestHeader
-		req    *protocol.LeaderAndISRRequest
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   *protocol.LeaderAndISRResponse
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Broker{
-				logger:      tt.fields.logger,
-				id:          tt.fields.id,
-				topicMap:    tt.fields.topicMap,
-				replicators: tt.fields.replicators,
-				brokerAddr:  tt.fields.brokerAddr,
-				logDir:      tt.fields.logDir,
-				raft:        tt.fields.raft,
-				serf:        tt.fields.serf,
-				shutdownCh:  tt.fields.shutdownCh,
-				shutdown:    tt.fields.shutdown,
-			}
-			if got := b.handleLeaderAndISR(tt.args.header, tt.args.req); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Broker.handleLeaderAndISR() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBroker_handleOffsets(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
-	type args struct {
-		header *protocol.RequestHeader
-		req    *protocol.OffsetsRequest
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   *protocol.OffsetsResponse
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Broker{
-				logger:      tt.fields.logger,
-				id:          tt.fields.id,
-				topicMap:    tt.fields.topicMap,
-				replicators: tt.fields.replicators,
-				brokerAddr:  tt.fields.brokerAddr,
-				logDir:      tt.fields.logDir,
-				raft:        tt.fields.raft,
-				serf:        tt.fields.serf,
-				shutdownCh:  tt.fields.shutdownCh,
-				shutdown:    tt.fields.shutdown,
-			}
-			if got := b.handleOffsets(tt.args.header, tt.args.req); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Broker.handleOffsets() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBroker_handleProduce(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
-	type args struct {
-		header *protocol.RequestHeader
-		req    *protocol.ProduceRequest
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   *protocol.ProduceResponses
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Broker{
-				logger:      tt.fields.logger,
-				id:          tt.fields.id,
-				topicMap:    tt.fields.topicMap,
-				replicators: tt.fields.replicators,
-				brokerAddr:  tt.fields.brokerAddr,
-				logDir:      tt.fields.logDir,
-				raft:        tt.fields.raft,
-				serf:        tt.fields.serf,
-				shutdownCh:  tt.fields.shutdownCh,
-				shutdown:    tt.fields.shutdown,
-			}
-			if got := b.handleProduce(tt.args.header, tt.args.req); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Broker.handleProduce() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBroker_handleMetadata(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
-	type args struct {
-		header *protocol.RequestHeader
-		req    *protocol.MetadataRequest
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   *protocol.MetadataResponse
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Broker{
-				logger:      tt.fields.logger,
-				id:          tt.fields.id,
-				topicMap:    tt.fields.topicMap,
-				replicators: tt.fields.replicators,
-				brokerAddr:  tt.fields.brokerAddr,
-				logDir:      tt.fields.logDir,
-				raft:        tt.fields.raft,
-				serf:        tt.fields.serf,
-				shutdownCh:  tt.fields.shutdownCh,
-				shutdown:    tt.fields.shutdown,
-			}
-			if got := b.handleMetadata(tt.args.header, tt.args.req); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Broker.handleMetadata() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestBroker_handleFetch(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
-	type args struct {
-		header *protocol.RequestHeader
-		r      *protocol.FetchRequest
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   *protocol.FetchResponses
-	}{
-	// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b := &Broker{
-				logger:      tt.fields.logger,
-				id:          tt.fields.id,
-				topicMap:    tt.fields.topicMap,
-				replicators: tt.fields.replicators,
-				brokerAddr:  tt.fields.brokerAddr,
-				logDir:      tt.fields.logDir,
-				raft:        tt.fields.raft,
-				serf:        tt.fields.serf,
-				shutdownCh:  tt.fields.shutdownCh,
-				shutdown:    tt.fields.shutdown,
-			}
-			if got := b.handleFetch(tt.args.header, tt.args.r); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Broker.handleFetch() = %v, want %v", got, tt.want)
+			if !tt.fields.serf.JoinInvoked {
+				t.Error("expected serf join invoked; did not")
 			}
 		})
 	}
@@ -715,24 +364,13 @@ func TestBroker_topics(t *testing.T) {
 }
 
 func TestBroker_partition(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
+	f := newFields()
+	f.topicMap = map[string][]*jocko.Partition{
+		"the-topic": []*jocko.Partition{{ID: 1}},
 	}
 	type args struct {
 		topic     string
 		partition int32
-	}
-	topicMap := map[string][]*jocko.Partition{
-		"the-topic": []*jocko.Partition{{ID: 1}},
 	}
 	tests := []struct {
 		name    string
@@ -742,22 +380,18 @@ func TestBroker_partition(t *testing.T) {
 		wanterr protocol.Error
 	}{
 		{
-			name: "found partitions",
-			fields: fields{
-				topicMap: topicMap,
-			},
+			name:   "found partitions",
+			fields: f,
 			args: args{
 				topic:     "the-topic",
 				partition: 1,
 			},
-			want:    topicMap["the-topic"][0],
+			want:    f.topicMap["the-topic"][0],
 			wanterr: protocol.ErrNone,
 		},
 		{
-			name: "no partitions",
-			fields: fields{
-				topicMap: topicMap,
-			},
+			name:   "no partitions",
+			fields: f,
 			args: args{
 				topic:     "not-the-topic",
 				partition: 1,
@@ -919,18 +553,7 @@ func TestBroker_clusterMember(t *testing.T) {
 }
 
 func TestBroker_startReplica(t *testing.T) {
-	type fields struct {
-		logger      *simplelog.Logger
-		id          int32
-		topicMap    map[string][]*jocko.Partition
-		replicators map[*jocko.Partition]*Replicator
-		brokerAddr  string
-		logDir      string
-		raft        jocko.Raft
-		serf        jocko.Serf
-		shutdownCh  chan struct{}
-		shutdown    bool
-	}
+	f := newFields()
 	type args struct {
 		partition *jocko.Partition
 	}
@@ -945,15 +568,8 @@ func TestBroker_startReplica(t *testing.T) {
 		want   protocol.Error
 	}{
 		{
-			name: "started replica",
-			fields: fields{
-				topicMap: make(map[string][]*jocko.Partition),
-				serf: &mock.Serf{
-					MemberFn: func(id int32) *jocko.ClusterMember {
-						return nil
-					},
-				},
-			},
+			name:   "started replica",
+			fields: f,
 			args: args{
 				partition: partition,
 			},
@@ -1280,3 +896,53 @@ func Test_contains(t *testing.T) {
 		})
 	}
 }
+
+type fields struct {
+	id          int32
+	serf        *mock.Serf
+	raft        *mock.Raft
+	addr        string
+	logger      *simplelog.Logger
+	topicMap    map[string][]*jocko.Partition
+	replicators map[*jocko.Partition]*Replicator
+	brokerAddr  string
+	logDir      string
+	shutdownCh  chan struct{}
+	shutdown    bool
+}
+
+func newFields() fields {
+	serf := &mock.Serf{
+		JoinFn: func(addrs ...string) (int, error) {
+			return 1, nil
+		},
+		BootstrapFn: func(node *jocko.ClusterMember, reconcileCh chan<- *jocko.ClusterMember) error {
+			return nil
+		},
+		MemberFn: func(id int32) *jocko.ClusterMember {
+			return nil
+		},
+	}
+	raft := &mock.Raft{
+		BootstrapFn: func(serf jocko.Serf, serfEventCh <-chan *jocko.ClusterMember, commandCh chan<- jocko.RaftCommand) error {
+			return nil
+		},
+		AddrFn: func() string {
+			return "localhost:9093"
+		},
+	}
+	return fields{
+		topicMap: make(map[string][]*jocko.Partition),
+		serf:     serf,
+		raft:     raft,
+		addr:     "localhost:9092",
+		logDir:   "/tmp/jocko",
+		id:       1,
+	}
+}
+
+type nopReaderWriter struct{}
+
+func (nopReaderWriter) Read(b []byte) (int, error)  { return 0, nil }
+func (nopReaderWriter) Write(b []byte) (int, error) { return 0, nil }
+func newNopReaderWriter() io.ReadWriter             { return nopReaderWriter{} }
